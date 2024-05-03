@@ -1,0 +1,33 @@
+
+
+
+
+
+
+
+
+
+
+dataset_file: datasets.toy_1d
+output_path: 'logs/'
+
+mp_loaders: 4
+
+
+
+
+
+
+
+
+
+
+max_epochs: 100
+learning_rate: 0.01
+batch_size: 128
+
+hidden_layer_dims: [2, 2]
+spline_order: 3
+num_intervals: 5
+
+load_from: null
