@@ -13,8 +13,9 @@ import torch
 from ignite.engine import Engine, Events
 import ignite.distributed as idist
 from ignite.utils import setup_logger
-from ignite.metrics import Frequency, MeanSquaredError
+from ignite.metrics import Frequency, MeanSquaredError, RootMeanSquaredError
 from ignite.handlers import ModelCheckpoint, global_step_from_engine
+from ignite.contrib.handlers import WandBLogger
 from ignite.contrib.metrics import GpuInfo
 
 from .builder import KAN, build_model
@@ -90,16 +91,38 @@ class Trainer:
         return to_save
 
 
-def build_engine(trainer: Trainer, output_path: str, validation_loader: Iterable) -> Engine:
+def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, validation_loader: Iterable, params: Dict) -> Engine:
 
     engine = Engine(trainer.train_step)
     frequency_metric = Frequency(output_transform=lambda x: x["num_items"])
     frequency_metric.attach(engine, "imgs/s", Events.ITERATION_COMPLETED)
     GpuInfo().attach(engine, "gpu")
 
-    engine_test = Engine(trainer.test_step)
+    engine_val = Engine(trainer.test_step)
     mse = MeanSquaredError()
-    mse.attach(engine_test, "mse")
+    rmse = RootMeanSquaredError()
+    mse.attach(engine_val, "mse")
+    rmse.attach(engine_val, "rmse")
+
+    if params["wandb"]:
+        tb_logger = WandBLogger(project='KAN', config=params)
+
+        tb_logger.attach_output_handler(
+            engine,
+            Events.ITERATION_COMPLETED(every=50),
+            tag="training",
+            output_transform=lambda x: x,
+            metric_names=["imgs/s"],
+            global_step_transform=global_step_from_engine(engine, Events.ITERATION_COMPLETED)
+        )
+
+        tb_logger.attach_output_handler(
+            engine_val,
+            Events.EPOCH_COMPLETED,
+            tag="testing",
+            metric_names=["mse", 'rmse'],
+            global_step_transform=global_step_from_engine(engine, Events.ITERATION_COMPLETED)
+        )
     
     # Display some info every 100 iterations
     @engine.on(Events.ITERATION_COMPLETED(every=100))
@@ -114,12 +137,27 @@ def build_engine(trainer: Trainer, output_path: str, validation_loader: Iterable
             engine.state.metrics["gpu:0 util(%)"]
         )
 
+    # Refine grid every so often
+    @engine.on(Events.ITERATION_COMPLETED(every=params["refine_grid_every"]))
+    def refine_grid(_: Engine):
+        LOGGER.info("Refining grids...")
+        trainer.flat_model.refine_grid()
+
+    # Update grid first update_grid_iterations iterations
+    # TODO: this should be done in a more elegant way
+    @engine.on(Events.EPOCH_COMPLETED(every=1))
+    def update_grid(_: Engine):
+        if engine.state.iteration < params["update_grid_iterations"]:
+            LOGGER.info("Updating grids...")
+            trainer.flat_model.train()
+            trainer.flat_model.update_grids(next(iter(train_loader))[0].to(idist.device()))
+        
     # Compute the validation score every so often
     @engine.on(Events.ITERATION_COMPLETED(every=100))
     def compute_fid(_: Engine):
         LOGGER.info("Validation MSE computation...")
-        engine_test.run(validation_loader, max_epochs=1)
-        LOGGER.info("Validation MSE score: %.4g", engine_test.state.metrics["mse"])
+        engine_val.run(validation_loader, max_epochs=1)
+        LOGGER.info("Validation MSE score: %.4g, RMSE score: %.4g", engine_val.state.metrics["mse"], engine_val.state.metrics["rmse"])
 
     # Visualize something every so often
     @engine.on(Events.ITERATION_COMPLETED(every=100))
@@ -202,7 +240,7 @@ def train_kan(local_rank: int, params: dict):
     model = _build_model(params, input_shapes[0], input_shapes[1])
     optimizer = torch.optim.Adam(model.parameters(), lr=params["learning_rate"])
     trainer = Trainer(model, optimizer)
-    engine = build_engine(trainer, output_path, validation_loader)
+    engine = build_engine(trainer, output_path, train_loader, validation_loader, params)
 
     # Load a model (if requested in params.yml) to continue training from it
     load_from = params.get('load_from', None)

@@ -19,8 +19,8 @@ class KANLayer(nn.Module):
 
         self.num_intervals = num_intervals
         self.spline_order = spline_order
-        
-        initial_domain = [-1, 1]
+
+        initial_domain_ranges = torch.as_tensor([[-1, 1]]).repeat(in_dim * out_dim, 1).reshape(in_dim, out_dim, -1).to(idist.device())
         num_control_points = num_intervals + spline_order
         variance = 0.1
 
@@ -29,14 +29,7 @@ class KANLayer(nn.Module):
         self.control_points = nn.Parameter(torch.as_tensor(np.random.normal(0, variance, (in_dim, out_dim, num_control_points))), requires_grad=True)
 
         # Initialize grid per activation function
-        grid = torch.linspace(initial_domain[0], initial_domain[1], num_intervals + 1)
-        step_size = (initial_domain[1] - initial_domain[0]) / num_intervals
-
-        pre_padding = torch.linspace(initial_domain[0] - spline_order * step_size, initial_domain[0] - step_size, spline_order)
-        post_padding = torch.linspace(initial_domain[1] + step_size, initial_domain[1] + spline_order * step_size, spline_order)
-        extended_grid = torch.cat((pre_padding, grid, post_padding))
-
-        self.grids = extended_grid.repeat(in_dim * out_dim, 1).reshape(in_dim, out_dim, -1).to(idist.device())
+        self.grids = self.make_grid(initial_domain_ranges)
 
         # Residual function silu
         self.silu = nn.SiLU()
@@ -44,6 +37,12 @@ class KANLayer(nn.Module):
         # Initialize weights for the scaling factor with Xavier initialization
         xavier_weights = np.random.normal(0, np.sqrt(2 / out_dim), (in_dim, out_dim))
         self.scaling_factors = nn.Parameter(torch.as_tensor(xavier_weights), requires_grad=True)
+
+    def make_grid(self, domains):
+        step_sizes = (domains[:, :, 1] - domains[:, :, 0]) / self.num_intervals
+        extended_grid = (domains[:, :, 0] - self.spline_order * step_sizes).unsqueeze(-1) + torch.arange(0, self.num_intervals + 2 * self.spline_order + 1, device=idist.device()).reshape(1, 1, -1) * step_sizes[:, None]
+        
+        return extended_grid.to(idist.device())
         
     def batched_cox_de_boor(self, i, degree, x):
         expanded_x = x.unsqueeze(-1)
@@ -58,6 +57,7 @@ class KANLayer(nn.Module):
     
     def forward(self, x):
         # Compute activations
+        # TODO: make vectorized version
         result = 0.0
         for i in range(self.num_intervals + self.spline_order):
             result += self.control_points[:, :, i] * self.batched_cox_de_boor(i, self.spline_order, x)
@@ -70,8 +70,27 @@ class KANLayer(nn.Module):
         result = result.reshape(x.shape[0], self.in_dim, self.out_dim)
         result = torch.sum(result, dim=1)
 
-        # TODO: cast before so computations are done faster?
+        # TODO: cast before so computations are more efficient?
         return result.to(torch.float32)
+    
+    def update_grid(self, x):
+        out = self.forward(x)
+        
+        # Get ranges of activations
+        min_acts = torch.min(x, dim=0).values
+        max_acts = torch.max(x, dim=0).values
+
+        # Update grid
+        # TODO: add margins?
+        domains = torch.stack([min_acts, max_acts], dim=1).unsqueeze(1)
+        print(domains)
+        self.grids = self.make_grid(domains)
+        print(self.grids)
+
+        # TODO: update control points
+        
+
+        return out
     
 
 class KAN(nn.Module):
@@ -90,6 +109,11 @@ class KAN(nn.Module):
             x = layer(x)
         
         return x
+    
+    def update_grids(self, x):
+        # Update grids
+        for layer in self.layers:
+            x = layer.update_grid(x)
 
 
 def build_model(params, input_shape, output_shape):

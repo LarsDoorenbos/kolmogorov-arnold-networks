@@ -8,13 +8,11 @@
 
 
 
-dataset_file: datasets.toy_1d
+dataset_file: datasets.toy_2d
 output_path: 'logs/'
 
 mp_loaders: 4
-
-
-
+wandb: no
 
 
 
@@ -26,8 +24,11 @@ max_epochs: 100
 learning_rate: 0.01
 batch_size: 128
 
-hidden_layer_dims: [2, 2]
+hidden_layer_dims: [1]
 spline_order: 3
 num_intervals: 5
+
+refine_grid_every: 200
+update_grid_iterations: 100
 
 load_from: null
