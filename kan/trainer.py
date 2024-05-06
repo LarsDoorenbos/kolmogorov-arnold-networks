@@ -109,7 +109,7 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
 
         tb_logger.attach_output_handler(
             engine,
-            Events.ITERATION_COMPLETED(every=50),
+            Events.ITERATION_COMPLETED(every=params["log_every"]),
             tag="training",
             output_transform=lambda x: x,
             metric_names=["imgs/s"],
@@ -125,7 +125,7 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
         )
     
     # Display some info every 100 iterations
-    @engine.on(Events.ITERATION_COMPLETED(every=100))
+    @engine.on(Events.ITERATION_COMPLETED(every=50))
     @idist.one_rank_only(rank=0, with_barrier=True)
     def log_info(engine: Engine):
         LOGGER.info(
@@ -137,23 +137,33 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
             engine.state.metrics["gpu:0 util(%)"]
         )
 
-    # Refine grid every so often
-    @engine.on(Events.ITERATION_COMPLETED(every=params["refine_grid_every"]))
-    def refine_grid(_: Engine):
-        LOGGER.info("Refining grids...")
-        trainer.flat_model.refine_grid()
-
-    # Update grid first update_grid_iterations iterations
-    # TODO: this should be done in a more elegant way
-    @engine.on(Events.EPOCH_COMPLETED(every=1))
+    # Update grid regularly. Double the grid resolution every refine_grid_every epochs
+    @torch.no_grad()
+    @engine.on(Events.EPOCH_STARTED(every=5))
     def update_grid(_: Engine):
-        if engine.state.iteration < params["update_grid_iterations"]:
+        refine = engine.state.epoch % params["refine_grid_every"] == 0
+        update = engine.state.epoch <= params["stop_updating_grid_after"]
+
+        if update and refine:
+            LOGGER.info("Updating and refining grids...")
+        elif update:
             LOGGER.info("Updating grids...")
-            trainer.flat_model.train()
-            trainer.flat_model.update_grids(next(iter(train_loader))[0].to(idist.device()))
+        elif refine:
+            LOGGER.info("Refining grids...")
+        else:
+            return
+        
+        trainer.flat_model.train()
+        batch = next(iter(train_loader))[0].to(idist.device())
+        trainer.flat_model.update_grids(batch, update=update, refine=refine)
+
+        # Need to re-initialize optimizer if grids are refined, as dimensions of control points change
+        if refine:
+            LOGGER.info("Re-initializing optimizer...")
+            trainer.optimizer = torch.optim.Adam(trainer.model.parameters(), lr=params["learning_rate"])
         
     # Compute the validation score every so often
-    @engine.on(Events.ITERATION_COMPLETED(every=100))
+    @engine.on(Events.ITERATION_COMPLETED(every=params["evaluate_every"]))
     def compute_fid(_: Engine):
         LOGGER.info("Validation MSE computation...")
         engine_val.run(validation_loader, max_epochs=1)
@@ -161,7 +171,7 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
 
     # Visualize something every so often
     @engine.on(Events.ITERATION_COMPLETED(every=100))
-    def compute_fid(_: Engine):
+    def visualize(_: Engine):
         LOGGER.info("Visualizing...")
         x, y = next(iter(validation_loader))
         x = x.to(idist.device())
