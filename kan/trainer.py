@@ -39,6 +39,9 @@ class Trainer:
 
     model: Model
     optimizer: torch.optim.Optimizer
+    lambda_reg: float
+    mu1: float
+    mu2: float
 
     @property
     def flat_model(self):
@@ -54,10 +57,10 @@ class Trainer:
         device = idist.device()
         x = x.to(device, non_blocking=True)
 
-        output = self.model(x)
+        output, l1, entropy = self.model(x)
         
         # Penalize the difference between real and estimated noise
-        loss = nn.functional.mse_loss(output, y.to(device))
+        loss = nn.functional.mse_loss(output, y.to(device)) + self.lambda_reg * (self.mu1 * l1 + self.mu2 * entropy)
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -75,7 +78,7 @@ class Trainer:
         device = idist.device()
         x = x.to(device, non_blocking=True)
 
-        output = self.model(x)
+        output, _, _ = self.model(x)
         
         return (output, y.to(device))
 
@@ -176,7 +179,9 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
         x, y = next(iter(validation_loader))
         x = x.to(idist.device())
         y = y.to(idist.device())
-        output = trainer.model(x).detach().cpu().numpy()[:, 0]
+        
+        output, _, _ = trainer.model(x)
+        output = output.detach().cpu().numpy()[:, 0]
 
         x = x.cpu().numpy()[:, 0]
         y = y.cpu().numpy()[:, 0]
@@ -249,7 +254,7 @@ def train_kan(local_rank: int, params: dict):
     # Build the model, optimizer, trainer and training engine
     model = _build_model(params, input_shapes[0], input_shapes[1])
     optimizer = torch.optim.Adam(model.parameters(), lr=params["learning_rate"])
-    trainer = Trainer(model, optimizer)
+    trainer = Trainer(model, optimizer, params["lambda"], params["mu1"], params["mu2"])
     engine = build_engine(trainer, output_path, train_loader, validation_loader, params)
 
     # Load a model (if requested in params.yml) to continue training from it

@@ -74,14 +74,20 @@ class KANLayer(nn.Module):
         res_x = self.silu(x)
         result = self.scaling_factors * (res_x.unsqueeze(-1) + result)
 
+        # Regularization
+        l1_norms = torch.sum(torch.abs(result), dim=0) / x.shape[0]
+        
+        l1 = torch.sum(l1_norms)
+        entropy = -torch.sum((l1_norms / l1) * torch.log(l1_norms / l1))
+
         # Sum results into neurons for next layer
         result = result.reshape(x.shape[0], self.in_dim, self.out_dim)
         result = torch.sum(result, dim=1)
 
-        return result
+        return result, l1, entropy
     
     def update_grid(self, x, update, refine):
-        old_out = self.forward(x)
+        old_out, _, _ = self.forward(x)
         old_acts = self.compute_spline(x)
 
         if refine:
@@ -125,8 +131,12 @@ class KANLayer(nn.Module):
     
 
 class KAN(nn.Module):
-    def __init__(self, in_dim, out_dim, num_intervals, spline_order, hidden_layer_dims):
+    def __init__(self, in_dim, out_dim, params):
         super(KAN, self).__init__()
+
+        num_intervals = params["num_intervals"]
+        spline_order = params["spline_order"]
+        hidden_layer_dims = params["hidden_layer_dims"]
 
         in_channels = [in_dim] + list(hidden_layer_dims)
         out_channels = list(hidden_layer_dims) + [out_dim]
@@ -136,10 +146,15 @@ class KAN(nn.Module):
             self.layers.append(KANLayer(in_ch, out_ch, num_intervals, spline_order))
         
     def forward(self, x):
+        l1_reg = 0
+        entropy_reg = 0
         for layer in self.layers:
-            x = layer(x)
+            x, l1, entropy = layer(x)
+
+            l1_reg += l1
+            entropy_reg += entropy
         
-        return x
+        return x, l1_reg, entropy_reg
     
     @torch.no_grad()
     def update_grids(self, x, update, refine):
@@ -149,7 +164,7 @@ class KAN(nn.Module):
 
 
 def build_model(params, input_shape, output_shape):
-    model = KAN(input_shape[0], output_shape[0], params["num_intervals"], params["spline_order"], params["hidden_layer_dims"])
+    model = KAN(input_shape[0], output_shape[0], params)
     num_of_parameters = sum(map(torch.numel, model.parameters()))
     LOGGER.info("Trainable params: %d", num_of_parameters)
 
