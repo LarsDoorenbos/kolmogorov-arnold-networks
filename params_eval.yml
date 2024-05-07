@@ -12,25 +12,24 @@ dataset_file: datasets.toy_2d
 output_path: 'logs/'
 
 mp_loaders: 4
-wandb: yes
+wandb: no
 log_every: 10
 evaluate_every: 10
 
 max_epochs: 1000
-optimizer: lbfgs # ['adam', 'lbfgs']
-learning_rate: 1
+learning_rate: 0.001
 batch_size: 1000
 
 hidden_layer_dims: [5]
 spline_order: 3
 num_intervals: 5
 
-lambda: 0.01
+lambda: 0.0
 mu1: 1.0
-mu2: 10.0
+mu2: 1.0
 
 refine_grid_every: 200
 update_grid_every: 5
 stop_updating_grid_after: 50
 
-load_from: null
+load_from: logs/best_checkpoint_240_mse=-0.0017.pt

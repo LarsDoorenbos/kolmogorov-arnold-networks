@@ -68,26 +68,26 @@ class KANLayer(nn.Module):
 
     def forward(self, x):
         # Compute activations
-        result = self.compute_spline(x)
+        spline = self.compute_spline(x)
 
         # Add residual connection and scaling
         res_x = self.silu(x)
-        result = self.scaling_factors * (res_x.unsqueeze(-1) + result)
+        activations = self.scaling_factors * (res_x.unsqueeze(-1) + spline)
 
         # Regularization
-        l1_norms = torch.sum(torch.abs(result), dim=0) / x.shape[0]
+        l1_norms = torch.sum(torch.abs(activations), dim=0) / x.shape[0]
         
         l1 = torch.sum(l1_norms)
         entropy = -torch.sum((l1_norms / l1) * torch.log(l1_norms / l1))
 
         # Sum results into neurons for next layer
-        result = result.reshape(x.shape[0], self.in_dim, self.out_dim)
+        result = activations.reshape(x.shape[0], self.in_dim, self.out_dim)
         result = torch.sum(result, dim=1)
 
-        return result, l1, entropy
+        return result, l1, entropy, activations
     
     def update_grid(self, x, update, refine):
-        old_out, _, _ = self.forward(x)
+        old_out, _, _, _ = self.forward(x)
         old_acts = self.compute_spline(x)
 
         if refine:
@@ -149,7 +149,7 @@ class KAN(nn.Module):
         l1_reg = 0
         entropy_reg = 0
         for layer in self.layers:
-            x, l1, entropy = layer(x)
+            x, l1, entropy, _ = layer(x)
 
             l1_reg += l1
             entropy_reg += entropy
@@ -161,6 +161,19 @@ class KAN(nn.Module):
         # Update grids
         for layer in self.layers:
             x = layer.update_grid(x, update, refine)
+
+    @torch.no_grad()
+    def get_all_activations(self, x):
+        inputs = []
+        activations = []
+        for layer in self.layers:
+            inputs.append(x.cpu().numpy())
+
+            x, _, _, acts = layer(x)
+            
+            activations.append(acts.cpu().numpy())
+        
+        return inputs, activations
 
 
 def build_model(params, input_shape, output_shape):

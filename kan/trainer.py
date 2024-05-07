@@ -57,14 +57,28 @@ class Trainer:
         device = idist.device()
         x = x.to(device, non_blocking=True)
 
-        output, l1, entropy = self.model(x)
-        
-        # Penalize the difference between real and estimated noise
-        loss = nn.functional.mse_loss(output, y.to(device)) + self.lambda_reg * (self.mu1 * l1 + self.mu2 * entropy)
+        if self.optimizer.__class__.__name__ == "LBFGS":
+            def closure():
+                self.optimizer.zero_grad()
+                output, l1, entropy = self.model(x)
 
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+                loss = nn.functional.mse_loss(output, y.to(device)) + self.lambda_reg * (self.mu1 * l1 + self.mu2 * entropy)
+                loss.backward()
+
+                return loss
+            
+            self.optimizer.step(closure)
+            # TODO: avoid computing the loss twice
+            loss = closure()
+        else:
+            output, l1, entropy = self.model(x)
+            
+            # Penalize the difference between real and estimated noise
+            loss = nn.functional.mse_loss(output, y.to(device)) + self.lambda_reg * (self.mu1 * l1 + self.mu2 * entropy)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
         return {"num_items": batch_size, "loss": loss.item()}
 
@@ -84,7 +98,7 @@ class Trainer:
 
     def objects_to_save(self, engine: Optional[Engine] = None) -> dict:
         to_save: Dict[str, Any] = {
-            "model": self.flat_model.unet,
+            "model": self.flat_model,
             "optimizer": self.optimizer
         }
 
@@ -126,6 +140,16 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
             metric_names=["mse", 'rmse'],
             global_step_transform=global_step_from_engine(engine, Events.ITERATION_COMPLETED)
         )
+
+    checkpoint_best = ModelCheckpoint(
+        output_path,
+        "best",
+        n_saved=1,
+        require_empty=False,
+        score_function=lambda engine: -engine.state.metrics['mse'],
+        score_name='mse',
+        global_step_transform=global_step_from_engine(engine, Events.ITERATION_COMPLETED)
+    )
     
     # Display some info every 100 iterations
     @engine.on(Events.ITERATION_COMPLETED(every=50))
@@ -140,7 +164,7 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
             engine.state.metrics["gpu:0 util(%)"]
         )
 
-    # Update grid regularly. Double the grid resolution every refine_grid_every epochs
+    # Update grid every 5 steps until epoch "stop_updating_grid_after". Double the grid resolution every "refine_grid_every" epochs
     @torch.no_grad()
     @engine.on(Events.EPOCH_STARTED(every=5))
     def update_grid(_: Engine):
@@ -157,20 +181,26 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
             return
         
         trainer.flat_model.train()
+        # TODO: do not always use the first batch
         batch = next(iter(train_loader))[0].to(idist.device())
         trainer.flat_model.update_grids(batch, update=update, refine=refine)
 
         # Need to re-initialize optimizer if grids are refined, as dimensions of control points change
         if refine:
             LOGGER.info("Re-initializing optimizer...")
-            trainer.optimizer = torch.optim.Adam(trainer.model.parameters(), lr=params["learning_rate"])
+            if params["optimizer"] == "adam":
+                trainer.optimizer = torch.optim.Adam(trainer.model.parameters(), lr=params["learning_rate"])
+            elif params["optimizer"] == "lbfgs":
+                trainer.optimizer = torch.optim.LBFGS(trainer.model.parameters(), lr=params["learning_rate"])
         
     # Compute the validation score every so often
     @engine.on(Events.ITERATION_COMPLETED(every=params["evaluate_every"]))
-    def compute_fid(_: Engine):
+    def compute_mse(_: Engine):
         LOGGER.info("Validation MSE computation...")
         engine_val.run(validation_loader, max_epochs=1)
         LOGGER.info("Validation MSE score: %.4g, RMSE score: %.4g", engine_val.state.metrics["mse"], engine_val.state.metrics["rmse"])
+
+        checkpoint_best(engine_val, trainer.objects_to_save(engine))
 
     # Visualize something every so often
     @engine.on(Events.ITERATION_COMPLETED(every=100))
@@ -179,7 +209,7 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
         x, y = next(iter(validation_loader))
         x = x.to(idist.device())
         y = y.to(idist.device())
-        
+
         output, _, _ = trainer.model(x)
         output = output.detach().cpu().numpy()[:, 0]
 
@@ -253,7 +283,12 @@ def train_kan(local_rank: int, params: dict):
 
     # Build the model, optimizer, trainer and training engine
     model = _build_model(params, input_shapes[0], input_shapes[1])
-    optimizer = torch.optim.Adam(model.parameters(), lr=params["learning_rate"])
+
+    if params["optimizer"] == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=params["learning_rate"])
+    elif params["optimizer"] == "lbfgs":
+        optimizer = torch.optim.LBFGS(model.parameters(), lr=params["learning_rate"])
+
     trainer = Trainer(model, optimizer, params["lambda"], params["mu1"], params["mu2"])
     engine = build_engine(trainer, output_path, train_loader, validation_loader, params)
 
