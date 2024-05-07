@@ -68,19 +68,22 @@ class Trainer:
                 return loss
             
             self.optimizer.step(closure)
-            # TODO: avoid computing the loss twice
+            # TODO: avoid computing the loss twice and log individual loss components
             loss = closure()
         else:
             output, l1, entropy = self.model(x)
             
             # Penalize the difference between real and estimated noise
-            loss = nn.functional.mse_loss(output, y.to(device)) + self.lambda_reg * (self.mu1 * l1 + self.mu2 * entropy)
+            mse_loss = nn.functional.mse_loss(output, y.to(device))
+            reg_loss = self.lambda_reg * (self.mu1 * l1 + self.mu2 * entropy)
+
+            loss = mse_loss + reg_loss
 
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
-        return {"num_items": batch_size, "loss": loss.item()}
+        return {"num_items": batch_size, "loss": loss.item(), "mse": mse_loss.item(), "l1": l1.item(), "entropy": entropy.item(), "reg": reg_loss.item()}
 
     @torch.no_grad()
     def test_step(self, _: Engine, batch: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -156,11 +159,13 @@ def build_engine(trainer: Trainer, output_path: str, train_loader: Iterable, val
     @idist.one_rank_only(rank=0, with_barrier=True)
     def log_info(engine: Engine):
         LOGGER.info(
-            "epoch=%d, iter=%d, speed=%.2fimg/s, loss=%.4g, gpu:0 util=%.2f%%",
+            "epoch=%d, iter=%d, speed=%.2fimg/s, loss=%.4g, mse=%.4g, reg=%.4g, gpu:0 util=%.2f%%",
             engine.state.epoch,
             engine.state.iteration,
             engine.state.metrics["imgs/s"],
             engine.state.output["loss"],
+            engine.state.output["mse"],
+            engine.state.output["reg"],
             engine.state.metrics["gpu:0 util(%)"]
         )
 

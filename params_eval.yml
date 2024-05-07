@@ -32,4 +32,4 @@ refine_grid_every: 200
 update_grid_every: 5
 stop_updating_grid_after: 50
 
-load_from: logs/best_checkpoint_240_mse=-0.0017.pt
+load_from: logs/best_checkpoint_310_mse=-0.0003.pt

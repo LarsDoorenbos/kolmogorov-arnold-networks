@@ -17,8 +17,8 @@ log_every: 10
 evaluate_every: 10
 
 max_epochs: 1000
-optimizer: lbfgs # ['adam', 'lbfgs']
-learning_rate: 1
+optimizer: adam # ['adam', 'lbfgs']
+learning_rate: 0.01
 batch_size: 1000
 
 hidden_layer_dims: [5]
