@@ -253,9 +253,9 @@ def _build_datasets(params: dict):
     dataset_file: str = params['dataset_file']
     dataset_module = importlib.import_module(dataset_file)
 
-    train_dataset = dataset_module.training_dataset()  # type: ignore
-    validation_dataset = dataset_module.validation_dataset()  # type: ignore
-    test_dataset = dataset_module.test_dataset()  # type: ignore
+    train_dataset = dataset_module.training_dataset(params["class_label"])  # type: ignore
+    validation_dataset = dataset_module.validation_dataset(params["class_label"])  # type: ignore
+    test_dataset = dataset_module.test_dataset(params["class_label"])  # type: ignore
 
     LOGGER.info("%d samples in dataset '%s'", len(train_dataset), dataset_file)
     LOGGER.info("%d samples in validation dataset '%s'", len(validation_dataset), dataset_file)

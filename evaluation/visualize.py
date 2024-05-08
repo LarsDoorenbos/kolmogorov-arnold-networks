@@ -52,10 +52,13 @@ def visualize(local_rank: int, params: dict):
     if load_from is not None:
         load(load_from, trainer=trainer, engine=engine)
 
-    # Get all activations on validation set
+    model.eval()
+
+    # Get all activations on test set
     inputs = {}
     activations = {}
-    for idx, batch in enumerate(validation_loader):
+    correct = 0
+    for idx, batch in enumerate(test_loader):
         x, y = batch
         x = x.to(idist.device())
         inps, acts = model.get_all_activations(x)
@@ -68,6 +71,11 @@ def visualize(local_rank: int, params: dict):
             for layer, (i, a) in enumerate(zip(inps, acts)):
                 inputs[layer] = torch.cat((inputs[layer], i))
                 activations[layer] = torch.cat((activations[layer], a))
+
+        y_pred = model(x)[0].cpu()
+        correct += torch.sum(torch.argmax(y_pred, dim=1) == torch.argmax(y, dim=1)).item()
+
+    print(f"Accuracy: {correct / len(test_loader.dataset)}")
 
     for i, a in inputs.items():
         print(f"Layer {i}")

@@ -35,9 +35,13 @@ class KANLayer(nn.Module):
         # Residual function silu
         self.silu = nn.SiLU()
 
-        # Initialize weights for the scaling factor with Xavier initialization
-        xavier_weights = np.random.normal(0, np.sqrt(2 / out_dim), (in_dim, out_dim))
-        self.scaling_factors = nn.Parameter(torch.as_tensor(xavier_weights, dtype=torch.float32), requires_grad=True)
+        # Initialize weights of the scaling factors for both the residual connections and the splines with Xavier initialization. 
+        # In the current version of the paper (8th of May) they have only one factor, but it should be two as confirmed by the authors (https://github.com/KindXiaoming/pykan/issues/128#issuecomment-2100761400)
+        xavier_weights_res = np.random.normal(0, np.sqrt(2 / out_dim), (in_dim, out_dim))
+        self.residual_scaling = nn.Parameter(torch.as_tensor(xavier_weights_res, dtype=torch.float32), requires_grad=True)
+
+        xavier_weights_spline = np.random.normal(0, np.sqrt(2 / out_dim), (in_dim, out_dim))
+        self.spline_scaling = nn.Parameter(torch.as_tensor(xavier_weights_spline, dtype=torch.float32), requires_grad=True)
 
         self.grid_margin = 0.01
 
@@ -72,7 +76,7 @@ class KANLayer(nn.Module):
 
         # Add residual connection and scaling
         res_x = self.silu(x)
-        activations = self.scaling_factors * (res_x.unsqueeze(-1) + spline)
+        activations = self.residual_scaling * res_x.unsqueeze(-1) + self.spline_scaling * spline
 
         # Regularization
         l1_norms = torch.sum(torch.abs(activations), dim=0) / x.shape[0]

@@ -8,7 +8,7 @@
 
 
 
-dataset_file: datasets.toy_2d
+dataset_file: datasets.toy_1d
 output_path: 'logs/'
 
 mp_loaders: 4
@@ -16,11 +16,13 @@ wandb: no
 log_every: 10
 evaluate_every: 10
 
+class_label: 1
+
 max_epochs: 1000
 learning_rate: 0.001
 batch_size: 1000
 
-hidden_layer_dims: [5]
+hidden_layer_dims: []
 spline_order: 3
 num_intervals: 5
 
@@ -32,4 +34,4 @@ refine_grid_every: 200
 update_grid_every: 5
 stop_updating_grid_after: 50
 
-load_from: logs/best_checkpoint_310_mse=-0.0003.pt
+load_from: logs/best_checkpoint_1210_mse=-0.0060.pt

@@ -8,7 +8,7 @@
 
 
 
-dataset_file: datasets.toy_2d
+dataset_file: datasets.toy_1d
 output_path: 'logs/'
 
 mp_loaders: 4
@@ -16,16 +16,18 @@ wandb: yes
 log_every: 10
 evaluate_every: 10
 
+class_label: 1
+
 max_epochs: 1000
 optimizer: adam # ['adam', 'lbfgs']
 learning_rate: 0.01
 batch_size: 1000
 
-hidden_layer_dims: [5]
+hidden_layer_dims: []
 spline_order: 3
 num_intervals: 5
 
-lambda: 0.01
+lambda: 0.0
 mu1: 1.0
 mu2: 10.0
 
