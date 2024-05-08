@@ -75,6 +75,7 @@ class Trainer:
             
             # Penalize the difference between real and estimated noise
             mse_loss = nn.functional.mse_loss(output, y.to(device))
+            print(output[:10], y[:10])
             reg_loss = self.lambda_reg * (self.mu1 * l1 + self.mu2 * entropy)
 
             loss = mse_loss + reg_loss

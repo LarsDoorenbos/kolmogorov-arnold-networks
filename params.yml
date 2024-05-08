@@ -12,7 +12,7 @@ dataset_file: datasets.toy_1d
 output_path: 'logs/'
 
 mp_loaders: 4
-wandb: yes
+wandb: no
 log_every: 10
 evaluate_every: 10
 
