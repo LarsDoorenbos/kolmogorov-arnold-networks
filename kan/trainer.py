@@ -75,7 +75,6 @@ class Trainer:
             
             # Penalize the difference between real and estimated noise
             mse_loss = nn.functional.mse_loss(output, y.to(device))
-            print(output[:10], y[:10])
             reg_loss = self.lambda_reg * (self.mu1 * l1 + self.mu2 * entropy)
 
             loss = mse_loss + reg_loss
@@ -299,6 +298,7 @@ def train_kan(local_rank: int, params: dict):
     engine = build_engine(trainer, output_path, train_loader, validation_loader, params)
 
     # Load a model (if requested in params.yml) to continue training from it
+    # TODO: change num_intervals based on the loaded model
     load_from = params.get('load_from', None)
     if load_from is not None:
         load_from = expanduservars(load_from)

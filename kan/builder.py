@@ -30,7 +30,8 @@ class KANLayer(nn.Module):
         self.control_points = nn.Parameter(torch.as_tensor(np.random.normal(0, initialization_variance, (in_dim, out_dim, self.num_control_points)), dtype=torch.float32), requires_grad=True)
 
         # Initialize grid per activation function
-        self.grids = self.make_grid(initial_domain_ranges)
+        grids = self.make_grid(initial_domain_ranges)
+        self.register_buffer("grids", grids)
 
         # Residual function silu
         self.silu = nn.SiLU()
@@ -104,13 +105,13 @@ class KANLayer(nn.Module):
             max_acts = torch.max(x, dim=0).values + self.grid_margin
 
             # Update grid
-            domains = torch.stack([min_acts, max_acts], dim=1).unsqueeze(1)
+            domains = torch.stack([min_acts, max_acts], dim=1).unsqueeze(1).repeat(1, self.out_dim, 1)
             self.grids.data = self.make_grid(domains).to(idist.device())
         else:
             # Refine grid without recomputing bounds
             domains = torch.stack((self.grids[:, :, self.spline_order], self.grids[:, :, -(self.spline_order + 1)]), dim=-1)
             self.grids.data = self.make_grid(domains).to(idist.device())
-
+        
         # Update control points
         # TODO: make vectorized version
         cdbs = []

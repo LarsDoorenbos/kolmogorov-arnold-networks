@@ -57,7 +57,9 @@ def visualize(local_rank: int, params: dict):
     # Get all activations on test set
     inputs = {}
     activations = {}
+
     correct = 0
+    total_mse = 0
     for idx, batch in enumerate(test_loader):
         x, y = batch
         x = x.to(idist.device())
@@ -75,7 +77,11 @@ def visualize(local_rank: int, params: dict):
         y_pred = model(x)[0].cpu()
         correct += torch.sum(torch.argmax(y_pred, dim=1) == torch.argmax(y, dim=1)).item()
 
+        mse = torch.nn.functional.mse_loss(y_pred, y, reduction='sum')
+        total_mse += mse.item()
+
     print(f"Accuracy: {correct / len(test_loader.dataset)}")
+    print(f"Mean MSE: {total_mse / len(test_loader.dataset)}")
 
     for i, a in inputs.items():
         print(f"Layer {i}")
